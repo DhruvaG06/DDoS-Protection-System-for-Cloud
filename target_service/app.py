@@ -7,13 +7,16 @@ Provides a realistic set of web endpoints to serve as the protected backend targ
 - GET /api/search
 - POST /api/login
 - GET /api/expensive-operation
+- POST /api/simulate-failure
+- POST /api/reset-health
 """
 
 import asyncio
 import os
+import sys
 import time
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, Query, Response, status
+from fastapi import FastAPI, Query, Request, Response, status
 from pydantic import BaseModel
 
 app = FastAPI(
@@ -31,14 +34,34 @@ PRODUCTS_DB = [
     {"id": 5, "name": "Autonomous Recovery Orchestrator", "category": "Software", "price": 540.00, "in_stock": True},
 ]
 
-# In-memory service state (allows simulated failure/recovery)
-service_state: Dict[str, Any] = {
-    "is_healthy": True,
-    "status_message": "Operational",
-    "instance_id": os.getenv("INSTANCE_ID", "target-instance-primary"),
-    "started_at": time.time(),
-    "request_count": 0,
-}
+# Per-instance health state dictionary keyed by instance_id ('app-1', 'app-2', 'app-3')
+instance_states: Dict[str, Dict[str, Any]] = {}
+
+
+def get_instance_state(inst_id: str) -> Dict[str, Any]:
+    if inst_id not in instance_states:
+        instance_states[inst_id] = {
+            "is_healthy": True,
+            "status_message": "Operational",
+            "instance_id": inst_id,
+            "started_at": time.time(),
+            "request_count": 0,
+        }
+    return instance_states[inst_id]
+
+
+def resolve_instance_id(request: Request) -> str:
+    hdr = request.headers.get("x-instance-id")
+    if hdr:
+        return hdr
+    port = request.url.port
+    if port == 8002:
+        return "app-2"
+    elif port == 8003:
+        return "app-3"
+    elif port == 8001:
+        return "app-1"
+    return os.getenv("INSTANCE_ID", "app-1")
 
 
 class LoginRequest(BaseModel):
@@ -57,13 +80,15 @@ class HealthStatus(BaseModel):
 
 
 @app.get("/", tags=["Application"])
-async def root() -> Dict[str, Any]:
+async def root(request: Request) -> Dict[str, Any]:
     """Root homepage endpoint."""
-    service_state["request_count"] += 1
+    inst_id = resolve_instance_id(request)
+    state = get_instance_state(inst_id)
+    state["request_count"] += 1
     return {
         "service": "OneChance Demo Web Application",
-        "instance_id": str(service_state["instance_id"]),
-        "status": "online" if service_state["is_healthy"] else "degraded",
+        "instance_id": inst_id,
+        "status": "online" if state["is_healthy"] else "degraded",
         "version": "1.0.0",
         "endpoints": [
             "GET /api/health",
@@ -77,50 +102,57 @@ async def root() -> Dict[str, Any]:
 
 @app.get("/api/health", response_model=HealthStatus, tags=["Health"])
 @app.get("/health", response_model=HealthStatus, tags=["Health"])
-async def health_check(response: Response) -> HealthStatus:
+async def health_check(request: Request, response: Response) -> HealthStatus:
     """Liveness & health probe."""
-    uptime = time.time() - float(service_state["started_at"])
-    if not service_state["is_healthy"]:
+    inst_id = resolve_instance_id(request)
+    state = get_instance_state(inst_id)
+    uptime = time.time() - float(state["started_at"])
+
+    if not state["is_healthy"]:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return HealthStatus(
             status="unhealthy",
-            instance_id=str(service_state["instance_id"]),
+            instance_id=inst_id,
             uptime_seconds=round(uptime, 2),
             is_healthy=False,
-            status_message=str(service_state["status_message"]),
-            served_requests=int(service_state["request_count"]),
+            status_message=str(state["status_message"]),
+            served_requests=int(state["request_count"]),
             timestamp=time.time(),
         )
 
     return HealthStatus(
         status="healthy",
-        instance_id=str(service_state["instance_id"]),
+        instance_id=inst_id,
         uptime_seconds=round(uptime, 2),
         is_healthy=True,
-        status_message=str(service_state["status_message"]),
-        served_requests=int(service_state["request_count"]),
+        status_message=str(state["status_message"]),
+        served_requests=int(state["request_count"]),
         timestamp=time.time(),
     )
 
 
 @app.get("/api/products", tags=["E-Commerce"])
-async def get_products(category: Optional[str] = None) -> Dict[str, Any]:
+async def get_products(request: Request, category: Optional[str] = None) -> Dict[str, Any]:
     """Return catalog of products."""
-    service_state["request_count"] += 1
+    inst_id = resolve_instance_id(request)
+    state = get_instance_state(inst_id)
+    state["request_count"] += 1
     results = PRODUCTS_DB
     if category:
         results = [p for p in PRODUCTS_DB if p["category"].lower() == category.lower()]
     return {
         "total": len(results),
         "products": results,
-        "instance_id": service_state["instance_id"],
+        "instance_id": inst_id,
     }
 
 
 @app.get("/api/search", tags=["E-Commerce"])
-async def search_products(q: str = Query(default="", description="Search query string")) -> Dict[str, Any]:
+async def search_products(request: Request, q: str = Query(default="", description="Search query string")) -> Dict[str, Any]:
     """Search items in product catalog."""
-    service_state["request_count"] += 1
+    inst_id = resolve_instance_id(request)
+    state = get_instance_state(inst_id)
+    state["request_count"] += 1
     query_lower = q.lower().strip()
     if not query_lower:
         matched = PRODUCTS_DB
@@ -133,15 +165,16 @@ async def search_products(q: str = Query(default="", description="Search query s
         "query": q,
         "results_count": len(matched),
         "results": matched,
-        "instance_id": service_state["instance_id"],
+        "instance_id": inst_id,
     }
 
 
 @app.post("/api/login", tags=["Authentication"])
-async def login(credentials: LoginRequest) -> Dict[str, Any]:
+async def login(request: Request, credentials: LoginRequest) -> Dict[str, Any]:
     """Simulated login authentication endpoint."""
-    service_state["request_count"] += 1
-    # Simple mock authentication
+    inst_id = resolve_instance_id(request)
+    state = get_instance_state(inst_id)
+    state["request_count"] += 1
     if credentials.username and credentials.password == "password123":
         return {
             "status": "authenticated",
@@ -150,7 +183,6 @@ async def login(credentials: LoginRequest) -> Dict[str, Any]:
             "expires_in": 3600,
         }
     elif credentials.username:
-        # Accept valid non-empty username for demo purposes
         return {
             "status": "authenticated",
             "username": credentials.username,
@@ -164,43 +196,64 @@ async def login(credentials: LoginRequest) -> Dict[str, Any]:
 
 
 @app.get("/api/expensive-operation", tags=["Compute"])
-async def expensive_operation(iterations: int = Query(default=50000, le=500000)) -> Dict[str, Any]:
+async def expensive_operation(request: Request, iterations: int = Query(default=50000, le=500000)) -> Dict[str, Any]:
     """Simulate a CPU-bound or database-intensive query endpoint."""
-    service_state["request_count"] += 1
+    inst_id = resolve_instance_id(request)
+    state = get_instance_state(inst_id)
+    state["request_count"] += 1
     start_time = time.time()
-    
-    # Simulate non-blocking CPU work
+
     total = sum(i * i for i in range(min(iterations, 200000)))
-    await asyncio.sleep(0.05)  # Simulate I/O or DB delay
-    
+    await asyncio.sleep(0.05)
+
     elapsed_ms = (time.time() - start_time) * 1000.0
     return {
         "operation": "heavy_hash_aggregation",
         "iterations": iterations,
         "computed_checksum": total % 1000000,
         "computation_time_ms": round(elapsed_ms, 2),
-        "instance_id": service_state["instance_id"],
+        "instance_id": inst_id,
     }
 
 
 @app.post("/api/simulate-failure", tags=["Simulation Controls"])
-async def simulate_failure(reason: str = "Simulated crash / resource exhaustion") -> Dict[str, str]:
+async def simulate_failure(request: Request, reason: str = "Simulated crash / resource exhaustion") -> Dict[str, str]:
     """Control hook to simulate an unhealthy container state."""
-    service_state["is_healthy"] = False
-    service_state["status_message"] = reason
-    return {"status": "success", "message": f"Service set to unhealthy: {reason}"}
+    inst_id = resolve_instance_id(request)
+    state = get_instance_state(inst_id)
+    state["is_healthy"] = False
+    state["status_message"] = reason
+    return {"status": "success", "message": f"Service '{inst_id}' set to unhealthy: {reason}"}
 
 
 @app.post("/api/reset-health", tags=["Simulation Controls"])
-async def reset_health() -> Dict[str, str]:
+async def reset_health(request: Request) -> Dict[str, str]:
     """Control hook to reset container health to healthy state."""
-    service_state["is_healthy"] = True
-    service_state["status_message"] = "Operational"
-    return {"status": "success", "message": "Service health restored to healthy"}
+    inst_id = resolve_instance_id(request)
+    state = get_instance_state(inst_id)
+    state["is_healthy"] = True
+    state["status_message"] = "Operational"
+    return {"status": "success", "message": f"Service '{inst_id}' health restored to healthy"}
 
 
 if __name__ == "__main__":
     import uvicorn
+    import threading
 
-    port = int(os.getenv("TARGET_SERVICE_PORT", "8001"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    def run_instance(port_num: int):
+        uvicorn.run("target_service.app:app", host="0.0.0.0", port=port_num, log_level="warning")
+
+    target_ports = [8001, 8002, 8003]
+    print(f"[TargetFleet] Starting Multi-Instance Target Service Fleet on ports {target_ports}...")
+    threads = []
+    for p in target_ports:
+        t = threading.Thread(target=run_instance, args=(p,), daemon=True)
+        t.start()
+        threads.append(t)
+
+    try:
+        for t in threads:
+            t.join()
+    except KeyboardInterrupt:
+        print("[TargetFleet] Fleet stopped.")
+

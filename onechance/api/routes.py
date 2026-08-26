@@ -674,41 +674,67 @@ async def demo_start_normal():
     await asyncio.sleep(0.1)
     active_demo_state["running"] = True
 
-    def _run_normal():
+    def _worker(thread_id: int):
         client = httpx.Client(base_url=f"http://127.0.0.1:{settings.GATEWAY_PORT}", timeout=3.0)
-        endpoints = ["/api/products", "/api/search?q=security", "/app-root"]
+        endpoints = ["/api/products", "/api/search?q=cloud", "/app-root", "/api/health"]
+        user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+        ]
         while active_demo_state.get("running", False):
             for ep in endpoints:
                 if not active_demo_state.get("running", False):
                     break
                 try:
-                    client.get(ep, headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0)"})
+                    ip_suffix = (thread_id * 10 + (int(time.time()) % 5))
+                    client.get(
+                        ep,
+                        headers={
+                            "user-agent": user_agents[thread_id % len(user_agents)],
+                            "x-forwarded-for": f"192.168.1.{10 + ip_suffix}",
+                        },
+                    )
                 except Exception:
                     pass
-                time.sleep(0.3)
+                time.sleep(0.2)
 
-    threading.Thread(target=_run_normal, daemon=True).start()
-    return {"status": "success", "message": "Normal background traffic simulation started"}
+    for tid in range(3):
+        threading.Thread(target=_worker, args=(tid,), daemon=True).start()
+
+    return {"status": "success", "message": "Normal background traffic simulation started (3 active threads)"}
 
 
 @router.post("/api/demo/start-attack", tags=["Demo Controls"])
 async def demo_start_attack():
-    """Simulate external DDoS flood attack."""
+    """Simulate intense external DDoS flood attack."""
     active_demo_state["running"] = False
     await asyncio.sleep(0.1)
     active_demo_state["running"] = True
 
-    def _run_attack():
+    def _worker(thread_id: int):
         client = httpx.Client(base_url=f"http://127.0.0.1:{settings.GATEWAY_PORT}", timeout=3.0)
+        botnet_ips = [
+            f"198.51.100.{10 + (i % 20)}" for i in range(20)
+        ]
         while active_demo_state.get("running", False):
             try:
-                client.get("/api/expensive-operation?iterations=5000", headers={"user-agent": "External-Botnet/3.0"})
+                ip = botnet_ips[(thread_id + int(time.time() * 10)) % len(botnet_ips)]
+                client.get(
+                    "/api/expensive-operation?iterations=5000",
+                    headers={
+                        "user-agent": f"External-Botnet-Node/{thread_id + 1}.0 (Mirai-Variant)",
+                        "x-forwarded-for": ip,
+                    },
+                )
             except Exception:
                 pass
-            time.sleep(0.04)
+            time.sleep(0.005)
 
-    threading.Thread(target=_run_attack, daemon=True).start()
-    return {"status": "success", "message": "External DDoS attack simulation started"}
+    for tid in range(8):
+        threading.Thread(target=_worker, args=(tid,), daemon=True).start()
+
+    return {"status": "success", "message": "External DDoS flood attack simulation started (8 high-rate botnet threads)"}
 
 
 @router.post("/api/demo/start-internal-attack", tags=["Demo Controls"])
@@ -718,22 +744,28 @@ async def demo_start_internal_attack():
     await asyncio.sleep(0.1)
     active_demo_state["running"] = True
 
-    def _run_internal():
+    def _worker(thread_id: int):
         client = httpx.Client(base_url=f"http://127.0.0.1:{settings.GATEWAY_PORT}", timeout=3.0)
-        headers = {
-            "user-agent": "Internal-Compromised-Microservice/1.0",
-            "x-attack-origin": "internal",
-            "x-forwarded-for": "10.0.9.99",
-        }
+        internal_ips = ["10.0.4.15", "10.0.4.16", "10.0.9.99"]
         while active_demo_state.get("running", False):
             try:
-                client.get("/api/expensive-operation?iterations=2000", headers=headers)
+                ip = internal_ips[thread_id % len(internal_ips)]
+                client.get(
+                    "/api/expensive-operation?iterations=3000",
+                    headers={
+                        "user-agent": "Internal-Compromised-Microservice/1.0",
+                        "x-attack-origin": "internal",
+                        "x-forwarded-for": ip,
+                    },
+                )
             except Exception:
                 pass
-            time.sleep(0.04)
+            time.sleep(0.005)
 
-    threading.Thread(target=_run_internal, daemon=True).start()
-    return {"status": "success", "message": "Internal cloud workload attack simulation started"}
+    for tid in range(6):
+        threading.Thread(target=_worker, args=(tid,), daemon=True).start()
+
+    return {"status": "success", "message": "Internal cloud workload attack simulation started (6 compromised service threads)"}
 
 
 @router.post("/api/demo/stop-attack", tags=["Demo Controls"])
@@ -762,4 +794,5 @@ async def demo_reset():
         "recovery_confidence": recovery_controller.calculate_recovery_confidence().model_dump(),
     })
     return {"status": "success", "message": "System state reset successfully"}
+
 
