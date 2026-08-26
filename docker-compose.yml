@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  # OneChance FastAPI Gateway / Reverse-Proxy
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: onechance-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - GATEWAY_HOST=0.0.0.0
+      - GATEWAY_PORT=8000
+      - TARGET_SERVICE_URL=http://application:8001
+      - ENVIRONMENT=development
+      - DEBUG=true
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - application
+    networks:
+      - onechance-net
+
+  # Demo Web Application (Origin Workload)
+  application:
+    build:
+      context: .
+      dockerfile: target_service/Dockerfile
+    container_name: onechance-demo-application
+    ports:
+      - "8001:8001"
+    environment:
+      - TARGET_SERVICE_PORT=8001
+      - INSTANCE_ID=target-instance-primary
+    networks:
+      - onechance-net
+
+networks:
+  onechance-net:
+    driver: bridge
