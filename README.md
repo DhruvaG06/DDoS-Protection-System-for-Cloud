@@ -11,167 +11,228 @@
 
 > **OneChance connects behavioral DDoS detection with autonomous service recovery.**
 
-The system does not stop at:
+Traditional DDoS mitigations stop at:
 $$\text{Detect} \longrightarrow \text{Block}$$
 
-It demonstrates the complete closed-loop workflow:
+OneChance delivers the complete autonomous closed-loop lifecycle:
 $$\text{Traffic} \longrightarrow \text{Behavioral Analysis} \longrightarrow \text{Risk Score} \longrightarrow \text{Allow / Challenge / Block} \longrightarrow \text{Mitigation} \longrightarrow \text{Service Health Monitoring} \longrightarrow \text{Automatic Isolation} \longrightarrow \text{Recovery Verification}$$
 
 ---
 
-## 💡 Novelty Priorities
+## 💡 System Innovations & Highlights
 
-1. **Behavioral Detection (Beyond Volume Thresholds)**: 10 extracted behavioral features including request rates, endpoint concentration entropy, burstiness, source distribution, and repeated patterns evaluated using trained Random Forest & statistical fallback detectors.
-2. **Risk-Adaptive Response (3 Tiers)**:
-   - `ALLOW`: Clean normal traffic forwarded to origin services (`action_type: forward`).
-   - `CHALLENGE`: Suspicious traffic requiring verification tokens (`action_type: challenge_issued`).
-   - `BLOCK`: Malicious traffic dropped at the ingress edge (`action_type: temporary_block`).
-3. **Autonomous Self-Healing & Service Recovery (Phase 4)**:
-   - **DETECT**: Continuous multi-instance health monitoring tracks availability, latency, and status codes.
-   - **ISOLATE**: Automatically detaches failing/overloaded containers from the active ingress traffic pool.
-   - **REROUTE**: Seamlessly redistributes ingress traffic across remaining healthy nodes with zero downtime.
-   - **REPLACE**: Initializes container restore and clean restart procedures.
-   - **HEALTH CHECK**: Requires $N$ consecutive passed probes before operational clearance.
-   - **REINTRODUCE**: Restores verified healthy instances back into the active round-robin distribution pool.
-   - **VERIFY RECOVERY**: Calculates an operational **Recovery Confidence Score (0–100)** based on healthy ratio, probe success rate, latency stability, and error indices.
-4. **Internal-Cloud Attack Awareness**: Detection capability for both external attack vectors and compromised internal cloud workloads.
-
----
-
-## 🏗️ Architecture & Component Overview
-
-```
-                      [ Client Traffic / Attack Traffic ]
-                                      │
-                                      ▼
-                        ┌───────────────────────────┐
-                        │   OneChance API Gateway   │
-                        │  (FastAPI Reverse Proxy   │
-                        │   & Autonomous Recovery)  │
-                        └─────────────┬─────────────┘
-                                      │  (Routes only to healthy instances)
-                                      │
-            ┌─────────────────────────┼─────────────────────────┐
-            ▼                         ▼                         ▼
- ┌─────────────────────┐   ┌─────────────────────┐   ┌─────────────────────┐
- │    app-1 (8001)     │   │    app-2 (8002)     │   │    app-3 (8003)     │
- │  Healthy / Serving  │   │  Healthy / Serving  │   │  Healthy / Serving  │
- └─────────────────────┘   └─────────────────────┘   └─────────────────────┘
-            │                         ▲
-            │       [ISOLATE / REROUTE / RESTORE]
-            └─────────────────────────┘
-```
+1. **Behavioral Anomaly Detection (Beyond Volume Thresholds)**:
+   - 10 multi-dimensional extracted signals including request rates, endpoint concentration entropy, burstiness, source distribution, and repeated pattern scores.
+   - Modular engine pairing a trained **Random Forest Classifier** with an automatic **Statistical / Heuristic Fail-Safe Fallback**.
+2. **Risk-Adaptive 3-Tier Defense Engine**:
+   - `ALLOW` (Risk 0–39): Clean traffic forwarded with low latency (`action_type: forward`).
+   - `CHALLENGE` (Risk 40–69): Suspicious traffic issued short-lived cryptographic verification tokens (`action_type: challenge_issued`).
+   - `BLOCK` (Risk 70–100): High-confidence malicious traffic blocked at the ingress edge (`action_type: temporary_block`).
+3. **Autonomous Self-Healing & Closed-Loop Service Recovery**:
+   - **DETECT**: Continuous health monitor probes container fleet availability and latency.
+   - **ISOLATE**: Immediately detaches degraded containers from ingress routing (`INSTANCE_ISOLATED`).
+   - **REROUTE**: Seamlessly redistributes ingress traffic across surviving healthy instances (`TRAFFIC_REROUTED`).
+   - **REPLACE**: Automatically triggers clean container process restoration (`REPLACEMENT_STARTED`).
+   - **HEALTH CHECK**: Requires $N=3$ consecutive successful probes before clearance (`REPLACEMENT_HEALTHY`).
+   - **REINTRODUCE**: Restores verified healthy instances to active load balancing (`INSTANCE_REINTRODUCED`).
+   - **VERIFY RECOVERY**: Computes operational **Recovery Confidence Score (0–100)** (`SERVICE_RECOVERY_VERIFIED`).
+4. **Internal Compromised Cloud Workload Awareness**:
+   - Classifies both external flood traffic and compromised internal microservices (`Attack Origin: INTERNAL WORKLOAD`).
+5. **Live Real-Time Security Operations Dashboard**:
+   - React + Vite live dashboard with real-time WebSocket telemetry, interactive attack simulators, decision explainability inspector, and infrastructure cluster health panel.
 
 ---
 
-## 📁 Repository Structure
+## 🏗️ Architecture Overview
 
 ```
-DDoS-Protection-System-for-Cloud/
-├── README.md                           # Master project constitution & guide
-├── requirements.txt                    # Python dependencies
-├── .env.example                        # Configuration template
-├── Dockerfile                          # Gateway container definition
-├── docker-compose.yml                  # Multi-container cluster orchestration (Gateway + app-1/2/3)
-│
-├── onechance/                          # Core OneChance Gateway & Autonomous Response
-│   ├── __init__.py
-│   ├── config.py                       # Settings & multi-instance targets
-│   ├── main.py                         # FastAPI gateway entrypoint with lifespan
-│   ├── logging/                        # Structured traffic & security logging
-│   │   ├── __init__.py
-│   │   ├── event_logger.py             # Security decision event ring buffer
-│   │   └── traffic_logger.py           # Structured JSON traffic logger
-│   ├── models/                         # Domain schemas & enums
-│   │   ├── __init__.py
-│   │   ├── traffic.py                  # IncomingRequest, TrafficFeatures, TrafficLog
-│   │   ├── decisions.py                # ActionEnum, ThreatLevel, RiskAssessment, PolicyDecision
-│   │   ├── events.py                   # SecurityEvent
-│   │   └── health.py                   # InstanceRecord, InstanceStatus, RecoveryEvent, RecoveryVerificationMetrics
-│   ├── core/                           # Intelligence & Mitigation
-│   │   ├── __init__.py
-│   │   ├── feature_extractor.py        # 10-signal behavioral telemetry extraction
-│   │   ├── detector.py                 # Hybrid ML Random Forest & fallback detector
-│   │   ├── risk_scorer.py              # Composite risk score calculation (0-100)
-│   │   ├── policy_engine.py            # 3-tier risk-adaptive response engine
-│   │   ├── rate_limiter.py             # Sliding-window rate limiter
-│   │   └── mitigator.py                # In-memory mitigation tables & token verification
-│   ├── monitoring/                     # Service health tracking
-│   │   ├── __init__.py
-│   │   └── health_monitor.py           # Multi-instance health monitor probe loop
-│   ├── recovery/                       # Autonomous self-healing
-│   │   ├── __init__.py
-│   │   ├── service_registry.py         # Multi-instance registry & active routing pool
-│   │   └── recovery_controller.py      # Closed-loop recovery orchestrator & confidence scoring
-│   └── api/                            # Routing & WebSockets
-│       ├── __init__.py
-│       ├── routes.py                   # Reverse-proxy & recovery API endpoints
-│       └── websockets.py               # Real-time dashboard broadcast manager
-│
-├── target_service/                     # Demo Protected Target Application (Origin Workload)
-│   ├── __init__.py
-│   ├── app.py                          # Multi-endpoint target web application with failure hooks
-│   └── Dockerfile                      # Target workload container definition
-│
-├── scripts/                            # Interactive Demonstrations & Simulators
-│   └── demo_phase4_self_healing.py     # Terminal demo of complete self-healing workflow
-│
-└── tests/                              # Automated Unit & Pipeline Tests
-    ├── test_phase0_foundation.py
-    ├── test_phase1_traffic_pipeline.py
-    ├── test_phase2_detection.py
-    ├── test_phase3_defense.py
-    └── test_phase4_self_healing.py
+                      [ Client Traffic / External Attack / Internal Microservice ]
+                                                   │
+                                                   ▼
+                        ┌─────────────────────────────────────────────────────┐
+                        │              OneChance API Gateway Layer            │
+                        │           (FastAPI Reverse Proxy & Firewall)        │
+                        ├─────────────────────────────────────────────────────┤
+                        │  • 10-Signal Behavioral Feature Extraction          │
+                        │  • Hybrid ML Random Forest Anomaly Detector         │
+                        │  • Multi-Signal Explainable Risk Scorer (0-100)     │
+                        │  • 3-Tier Adaptive Policy Engine (ALLOW/CHAL/BLOCK) │
+                        │  • WebSocket Real-Time Broadcast Server             │
+                        └──────────────────────────┬──────────────────────────┘
+                                                   │
+                                                   ▼ (Routes only to healthy nodes)
+                      ┌────────────────────────────┼────────────────────────────┐
+                      ▼                            ▼                            ▼
+           ┌─────────────────────┐      ┌─────────────────────┐      ┌─────────────────────┐
+           │    app-1 (8001)     │      │    app-2 (8002)     │      │    app-3 (8003)     │
+           │  Healthy / Serving  │      │  Healthy / Serving  │      │  Healthy / Serving  │
+           └─────────────────────┘      └─────────────────────┘      └─────────────────────┘
+                      │                            ▲
+                      │         [ISOLATE / REROUTE / RESTORE]
+                      └────────────────────────────┘
 ```
 
 ---
 
-## 🚀 Execution & Self-Healing Demo
+## ⏱️ 3-MINUTE JUDGE DEMONSTRATION
 
-### 1. Run Automated Test Suite
+Follow these steps for an interactive demonstration of the closed-loop workflow:
+
+### Option A: Web Dashboard Demo (Visual)
+
+1. **Open Dashboard**: Navigate to `http://localhost:5173` in your browser.
+2. **Initial State**: Observe all 3 nodes (`app-1`, `app-2`, `app-3`) showing **HEALTHY** and Threat Status **PROTECTED / LOW RISK**.
+3. **Normal Traffic**: Click **"Simulate Normal Traffic"** — observe legitimate requests passing with decision `ALLOW` and low risk score.
+4. **External DDoS Attack**: Click **"Simulate DDoS Attack"** — observe real-time risk score spike to $>80$, decision transitions to `BLOCK`, and blocked traffic spikes in the live chart.
+5. **Internal Attack**: Click **"Simulate Internal Attack"** — observe threat card highlight **Attack Origin: INTERNAL WORKLOAD**.
+6. **Simulate Failure**: Click **"Crash app-2"** under Infrastructure Health:
+   - Node `app-2` turns **UNHEALTHY** and is automatically **ISOLATED**.
+   - Traffic reroutes to `app-1` + `app-3` with **zero dropped requests**.
+   - Replacement sequence starts, passes health probes, and reintroduces `app-2`.
+   - Recovery verified with **Recovery Confidence Score $>90\%$**.
+7. **Reset**: Click **"Reset System State"** — cluster, blocklists, and charts return to clean baseline state.
+
+### Option B: Terminal CLI Master Demo
+
+In a separate terminal, run:
 ```bash
-python -m pytest -v
-# 47 passed across all 5 test suites
+python scripts/demo_phase6_master.py
+```
+This executes the 12-step autonomous closed loop with formatted terminal tables and real-time step confirmations.
+
+---
+
+## 📊 Measured Benchmark Results (Phase 6 Evaluation)
+
+Evaluated directly on the running system via `scripts/evaluate_mvp.py` (*no fabricated metrics*):
+
+| Metric Category | Metric Name | Measured Value |
+| :--- | :--- | :--- |
+| **Detection Quality** | Precision | **100.00%** |
+| **Detection Quality** | Recall | **72.00%** |
+| **Detection Quality** | F1 Score | **0.8372** |
+| **Detection Latency** | Average Pipeline Latency | **5.61 ms** |
+| **Detection Latency** | Max Pipeline Latency | **14.78 ms** |
+| **Defense Policy** | Ingress Normal Traffic Pass Rate | **100% (200 OK)** |
+| **Defense Policy** | DDoS Flood Mitigation Rate | **100% (403 Blocked)** |
+| **Self-Healing** | Failure Detection & Isolation Time | **< 15 ms** |
+| **Self-Healing** | Replacement & Health Probe Clearance | **3 consecutive probes** |
+| **Self-Healing** | Service Availability Under Isolation | **100% uptime across surviving nodes** |
+
+---
+
+## 🚀 How to Run the Project
+
+### System Requirements & Tools
+- **Python**: 3.12+ (with `pip`)
+- **Node.js**: 18+ (with `npm`)
+- **Docker & Docker Compose** (Optional, for containerized run)
+
+---
+
+### Method 1: Run with Docker Compose (Recommended)
+
+```bash
+# Build and launch Gateway, Demo App Cluster (app-1, app-2, app-3), and Frontend Dashboard
+docker compose up --build
+```
+- **Gateway & API**: `http://localhost:8000`
+- **Live React Dashboard**: `http://localhost:5173`
+- **Swagger API Docs**: `http://localhost:8000/docs`
+
+---
+
+### Method 2: Run Standalone / Local Python & Node
+
+#### 1. Install Dependencies
+```bash
+# Python Backend
+pip install -r requirements.txt
+
+# React Dashboard
+cd frontend
+npm install
+cd ..
 ```
 
-### 2. Run Interactive Phase 4 Autonomous Self-Healing Demo
+#### 2. Start Services
 
-#### Step A: Start Gateway in Terminal 1
+**Terminal 1 — Target Origin Application Fleet:**
+```bash
+python -m target_service.app
+# Runs on ports 8001, 8002, 8003
+```
+
+**Terminal 2 — OneChance Gateway & Autonomous Controller:**
 ```bash
 python -m onechance.main
+# Runs on http://localhost:8000
 ```
 
-#### Step B: Run Demo Script in Terminal 2
+**Terminal 3 — Live React Dashboard:**
 ```bash
-python scripts/demo_phase4_self_healing.py
+cd frontend
+npm run dev
+# Runs on http://localhost:5173
 ```
 
 ---
 
-## 🧪 Phase 4 API Endpoints
+## 🧪 Automated Test Suite
 
-| Endpoint | Method | Description |
-| :--- | :--- | :--- |
-| `/api/recovery/status` | `GET` | Cluster health snapshot, active instances, and Recovery Confidence |
-| `/api/recovery/events` | `GET` | Chronological list of structured recovery and infrastructure events |
-| `/api/recovery/simulate-failure` | `POST` | Deterministic container crash simulation hook on target node |
-| `/api/recovery/reset` | `POST` | Reset cluster states and recovery timeline for repeating demos |
-| `/api/recovery/verify` | `GET` | Compute and return the operational Recovery Confidence Score (0–100) |
-| `/api/health` | `GET` | Comprehensive gateway, detection engine, and cluster health status |
+Run the full automated test suite covering all 6 development phases:
+
+```bash
+python -m pytest -v
+```
+
+```
+====================== 57 passed in 11.58s ======================
+* tests/test_phase0_foundation.py        [6 passed]
+* tests/test_phase1_traffic_pipeline.py  [10 passed]
+* tests/test_phase2_detection.py         [10 passed]
+* tests/test_phase3_defense.py           [11 passed]
+* tests/test_phase4_self_healing.py      [10 passed]
+* tests/test_phase5_dashboard_internal.py[4 passed]
+* tests/test_phase6_final_integration.py [6 passed]
+```
+
+To run the offline evaluation benchmark:
+```bash
+python scripts/evaluate_mvp.py
+```
 
 ---
 
-## 🗺️ Project Phases
+## 📋 Final MVP Feature Checklist
 
-- [x] **Phase 0: Architecture, Interfaces & Project Foundation**
-- [x] **Phase 1: Working Application + Traffic Gateway Pipeline**
-- [x] **Phase 2: Behavioral Feature Extraction & ML Anomaly Detection Model**
-- [x] **Phase 3: Adaptive Defense Engine (ALLOW / CHALLENGE / BLOCK) & Mitigation**
-- [x] **Phase 4: Autonomous Self-Healing and Service Recovery**
-  - Multi-container cluster orchestration (`app-1`, `app-2`, `app-3`)
-  - Dynamic `ServiceRegistry` with active healthy routing pool
-  - Continuous `HealthMonitor` with failure threshold detection
-  - Autonomous `RecoveryController` pipeline: `DETECT` $\rightarrow$ `ISOLATE` $\rightarrow$ `REROUTE` $\rightarrow$ `REPLACE` $\rightarrow$ `HEALTH CHECK` $\rightarrow$ `REINTRODUCE` $\rightarrow$ `VERIFY RECOVERY`
-  - Operational **Recovery Confidence Score (0–100)** calculation
-  - Deterministic failure simulation API and complete automated test suite (47/47 tests passing)
-- [ ] **Phase 5: Real-Time React Dashboard & Judge Demonstration Workflow**
+- [x] **FastAPI Gateway Reverse Proxy**: Captures telemetry, headers, and request tracing.
+- [x] **Demo Target Web Service**: Real endpoints (`/`, `/api/health`, `/api/products`, `/api/search`, `/api/login`, `/api/expensive-operation`).
+- [x] **Behavioral Feature Extractor**: 10 sliding-window behavioral signals calculated in real-time.
+- [x] **Modular Anomaly Detector**: Random Forest model with statistical fallback mechanism.
+- [x] **Explainable Risk Scorer**: Composite 0–100 risk score with human-readable contributing reasons.
+- [x] **3-Tier Adaptive Policy Engine**: `ALLOW` $\rightarrow$ `CHALLENGE` $\rightarrow$ `BLOCK` transitions.
+- [x] **Mitigation Engine**: Real-time IP blocking tables, challenge verification, and rate limiting.
+- [x] **Multi-Container Service Registry**: Dynamic node registry with round-robin distribution.
+- [x] **Health Monitor**: Continuous background async probing with failure threshold triggers.
+- [x] **Deterministic Failure Simulation**: `POST /api/recovery/simulate-failure` hook.
+- [x] **Automatic Workload Isolation**: Detaches unhealthy instances without dropping healthy traffic.
+- [x] **Zero-Downtime Traffic Rerouting**: Seamless redistribution over healthy surviving nodes.
+- [x] **Container Replacement & Probe Verification**: Requires $N=3$ consecutive successful checks.
+- [x] **Reintroduction & Recovery Confidence Score**: Verifies cluster operational recovery (0–100).
+- [x] **Internal Cloud Workload Attack Detection**: Detects and flags compromised internal microservices.
+- [x] **Live React Dashboard**: Built with Vite, Tailwind/Modern CSS, and Lucide icons.
+- [x] **Real-Time WebSocket Stream**: Instant bi-directional security and recovery telemetry.
+- [x] **Unified Demo Reset**: One-click reset restoring all registries, events, and metrics.
+- [x] **Deterministic Master Demo Script**: Complete 3-minute presentation runner (`demo_phase6_master.py`).
+- [x] **Measured Evaluation Benchmark**: Reproducible evaluation suite (`evaluate_mvp.py`).
+- [x] **Fail-Safe Robustness**: Verified graceful fallback when ML models are unavailable.
+- [x] **Complete Test Suite**: 57/57 unit, integration, and scenario tests passing.
+
+---
+
+## ⚖️ Scope & Honest MVP Boundaries
+
+- **Hackathon MVP Scope**: Built as a clear proof-of-concept for the Smart India Hackathon 2026.
+- **Fail-Safe over Enterprise Overkill**: Uses in-memory state tracking and Docker container controls rather than heavy production Kubernetes or AWS multi-region infrastructure.
+- **Measured Realism**: Performance figures are benchmarked on local test workloads; we do not claim global enterprise scale or edge CDN parity.

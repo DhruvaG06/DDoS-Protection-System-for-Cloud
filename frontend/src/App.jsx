@@ -67,6 +67,13 @@ export default function App() {
           } else if (message.type === 'RECOVERY_EVENT') {
             const newRec = message.event;
             setRecoveryEvents((prev) => [newRec, ...prev.slice(0, 99)]);
+          } else if (message.type === 'RESET') {
+            setSecurityEvents([]);
+            setRecoveryEvents([]);
+            setTrafficHistory([]);
+            setSelectedEvent(null);
+            if (message.instances) setInstances(message.instances);
+            if (message.recovery_confidence) setRecoveryConfidence(message.recovery_confidence);
           }
         } catch (err) {
           console.error('Failed to parse WebSocket message:', err);
@@ -95,8 +102,10 @@ export default function App() {
       try {
         const res = await fetch('http://localhost:8000/api/recovery/status');
         const data = await res.json();
-        if (data.instances) setInstances(data.instances);
-        if (data.recovery_confidence) setRecoveryConfidence(data.recovery_confidence);
+        const instList = data.snapshot?.instances || data.instances;
+        if (instList) setInstances(instList);
+        const conf = data.verification_metrics || data.recovery_confidence;
+        if (conf) setRecoveryConfidence(conf);
       } catch (e) {
         // Fallback silently if offline
       }

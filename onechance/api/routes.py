@@ -750,5 +750,16 @@ async def demo_reset():
     mitigator.clear()
     event_logger.clear()
     traffic_logger.clear()
+    feature_extractor.clear()
+    rate_limiter.clear()
     recovery_controller.reset_recovery_state()
+
+    # Broadcast reset to WebSocket clients
+    await ws_manager.broadcast_json({
+        "type": "RESET",
+        "timestamp": time.time(),
+        "instances": [inst.model_dump() for inst in service_registry.get_all_instances()],
+        "recovery_confidence": recovery_controller.calculate_recovery_confidence().model_dump(),
+    })
     return {"status": "success", "message": "System state reset successfully"}
+
