@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # OneChance FastAPI Gateway / Reverse-Proxy
+  # OneChance FastAPI Gateway / Reverse-Proxy & Autonomous Recovery
   gateway:
     build:
       context: .
@@ -12,27 +12,59 @@ services:
     environment:
       - GATEWAY_HOST=0.0.0.0
       - GATEWAY_PORT=8000
-      - TARGET_SERVICE_URL=http://application:8001
+      - TARGET_SERVICE_URL=http://app-1:8001
+      - TARGET_SERVICE_INSTANCES=http://app-1:8001,http://app-2:8001,http://app-3:8001
       - ENVIRONMENT=development
       - DEBUG=true
+      - AUTO_RECOVERY_ENABLED=true
     volumes:
       - ./logs:/app/logs
     depends_on:
-      - application
+      - app-1
+      - app-2
+      - app-3
     networks:
       - onechance-net
 
-  # Demo Web Application (Origin Workload)
-  application:
+  # Demo Web Application Instance 1 (Primary)
+  app-1:
     build:
       context: .
       dockerfile: target_service/Dockerfile
-    container_name: onechance-demo-application
+    container_name: onechance-app-1
     ports:
       - "8001:8001"
     environment:
       - TARGET_SERVICE_PORT=8001
-      - INSTANCE_ID=target-instance-primary
+      - INSTANCE_ID=app-1
+    networks:
+      - onechance-net
+
+  # Demo Web Application Instance 2 (Node 2)
+  app-2:
+    build:
+      context: .
+      dockerfile: target_service/Dockerfile
+    container_name: onechance-app-2
+    ports:
+      - "8002:8001"
+    environment:
+      - TARGET_SERVICE_PORT=8001
+      - INSTANCE_ID=app-2
+    networks:
+      - onechance-net
+
+  # Demo Web Application Instance 3 (Node 3)
+  app-3:
+    build:
+      context: .
+      dockerfile: target_service/Dockerfile
+    container_name: onechance-app-3
+    ports:
+      - "8003:8001"
+    environment:
+      - TARGET_SERVICE_PORT=8001
+      - INSTANCE_ID=app-3
     networks:
       - onechance-net
 

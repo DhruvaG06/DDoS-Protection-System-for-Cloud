@@ -1,7 +1,7 @@
 """Risk scoring and policy decision models."""
 
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 

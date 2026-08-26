@@ -1,4 +1,4 @@
-"""OneChance API Gateway Reverse-Proxy & Adaptive Defense Routes (Phase 3)."""
+"""OneChance API Gateway Reverse-Proxy & Autonomous Response Routes (Phase 4)."""
 
 import json
 import time
@@ -20,11 +20,15 @@ from onechance.logging.event_logger import SecurityEventLogger
 from onechance.logging.traffic_logger import traffic_logger
 from onechance.models.decisions import ActionEnum, PolicyDecision, RiskAssessment, ThreatLevel
 from onechance.models.events import SecurityEvent
+from onechance.models.health import InstanceStatus, RecoveryEventType
 from onechance.models.traffic import AttackSourceType, IncomingRequest
+from onechance.monitoring.health_monitor import health_monitor
+from onechance.recovery.recovery_controller import recovery_controller
+from onechance.recovery.service_registry import service_registry
 
 router = APIRouter()
 
-# Singletons for Feature Extractor, Detector, Risk Scorer, Policy Engine, Mitigator, Rate Limiter & Event Logger
+# Singletons for Core Engine
 feature_extractor = FeatureExtractor(window_duration_seconds=float(settings.RATE_LIMIT_WINDOW_SECONDS))
 detector = ModularDetectorEngine(model_path=settings.DETECTOR_MODEL_PATH)
 risk_scorer = RiskScorer()
@@ -43,11 +47,20 @@ class UnblockRequest(BaseModel):
     client_ip: str
 
 
+class FailureSimulationRequest(BaseModel):
+    instance_id: str = Field(default="app-2", description="ID of application instance to simulate failure on")
+    reason: str = Field(default="Controlled container crash / resource starvation demo", description="Explainability reason")
+
+
 async def forward_request(
     path: str,
     request: Request,
 ) -> FastAPIResponse:
-    """Core reverse-proxy forwarder integrated with Phase 3 Adaptive Defense (ALLOW -> CHALLENGE -> BLOCK)."""
+    """Core reverse-proxy forwarder integrated with:
+    - Phase 2: Hybrid Behavioral Detection & Explainable Risk Scoring
+    - Phase 3: Adaptive Defense Engine (ALLOW -> CHALLENGE -> BLOCK) & Rate Limiting
+    - Phase 4: Service Registry & Multi-Instance Healthy Pool Routing
+    """
     request_id = f"req_{uuid.uuid4().hex[:12]}"
     start_time = time.time()
     source = request.client.host if request.client else "127.0.0.1"
@@ -99,7 +112,7 @@ async def forward_request(
                 "explanation": block_decision.reason,
                 "request_id": request_id,
             }).encode("utf-8"),
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            status_code=status.HTTP_403_FORBIDDEN,
             media_type="application/json",
             headers={
                 "x-request-id": request_id,
@@ -107,48 +120,56 @@ async def forward_request(
                 "x-risk-score": str(block_decision.risk_score),
                 "x-threat-level": block_decision.threat_level.value,
                 "x-policy-version": block_decision.policy_version,
-                "retry-after": str(int(remaining_seconds or 60)),
             },
         )
 
-    # 2. Check Rate Limiter
-    is_rl, rl_reason = rate_limiter.is_rate_limited(source, endpoint)
-    if is_rl:
-        metadata["is_rate_limited"] = True
-        metadata["rate_limit_reason"] = rl_reason
-
-    # 3. Check Security Challenge Verification Token in Headers/Query Params
-    challenge_token_hdr = request.headers.get("x-challenge-token") or request.query_params.get("challenge_token")
-    if challenge_token_hdr:
-        valid_tok, failed_count = mitigator.verify_challenge(source, challenge_token_hdr)
-        if valid_tok:
+    # 2. Challenge Token Pass-Through Verification
+    challenge_token_header = request.headers.get("x-challenge-token")
+    if challenge_token_header:
+        valid_challenge, _ = mitigator.verify_challenge(source, challenge_token_header)
+        if valid_challenge:
             metadata["challenge_verified"] = True
-        else:
-            metadata["challenge_failed"] = True
-            metadata["failed_count"] = failed_count
-    elif mitigator.is_session_verified(source):
-        metadata["challenge_verified"] = True
 
-    # 4. Phase 2 Feature Extraction & Anomaly Risk Scoring
-    inc_req = IncomingRequest(
+    # 3. Behavioral Feature Extraction (10 Signals)
+    attack_source_header = request.headers.get("x-attack-source", "external")
+    source_type = (
+        AttackSourceType.INTERNAL_COMPROMISED
+        if attack_source_header == "internal"
+        else AttackSourceType.EXTERNAL
+    )
+    incoming_req = IncomingRequest(
         client_ip=source,
         method=method,
         path=endpoint,
+        headers=dict(request.headers),
         user_agent=user_agent,
         timestamp=start_time,
-        source_type=AttackSourceType.INTERNAL if ("internal" in user_agent.lower() or source.startswith("10.")) else AttackSourceType.EXTERNAL,
+        source_type=source_type,
     )
-    features = feature_extractor.extract_features(inc_req)
-    anomaly_prob = detector.predict_anomaly_probability(features)
-    risk_assessment = risk_scorer.calculate_risk(features, anomaly_prob, detector.version)
+    traffic_features = feature_extractor.extract_features(incoming_req)
 
-    # 5. Phase 3 Policy Engine Evaluation
-    policy_decision = policy_engine.evaluate(risk_assessment, endpoint=endpoint, request_metadata=metadata)
+    # 4. ML / Behavioral Anomaly Detection
+    anomaly_probability = detector.predict_anomaly_probability(traffic_features)
+
+    # 5. Explainable Risk Scoring
+    risk_assessment = risk_scorer.calculate_risk(
+        features=traffic_features,
+        anomaly_probability=anomaly_probability,
+        detector_version=detector.version,
+    )
+
+    # 6. Adaptive Defense Policy Evaluation (3 Tiers)
+    policy_decision = policy_engine.evaluate(
+        assessment=risk_assessment,
+        endpoint=endpoint,
+        client_ip=source,
+        has_valid_challenge=metadata.get("challenge_verified", False),
+    )
+
+    # 7. Mitigation Table Application
     mitigator.apply_decision(policy_decision)
 
-    # 6. Log Security Telemetry Event
-    attack_origin = "internal_cloud_workload" if features.is_internal_workload else "external_internet"
-    service_name = endpoint.split("?")[0].strip("/").split("/")[0] or "gateway_ingress"
+    # 8. Security Event Logging
     sec_event = SecurityEvent(
         source=source,
         endpoint=endpoint,
@@ -157,27 +178,37 @@ async def forward_request(
         decision=policy_decision.decision,
         action=policy_decision.action_type,
         reasons=policy_decision.reasons,
-        attack_origin=attack_origin,
-        affected_service=service_name,
+        attack_origin="internal_cloud_workload" if source_type == AttackSourceType.INTERNAL_COMPROMISED else "external_internet",
         policy_version=policy_decision.policy_version,
     )
     event_logger.log_event(sec_event)
 
-    # 7. Action Execution based on Policy Decision
+    # 9. Handle BLOCK Decision
     if policy_decision.decision == ActionEnum.BLOCK:
+        latency_ms = (time.time() - start_time) * 1000.0
+        traffic_logger.log_request(
+            request_id=request_id,
+            timestamp=start_time,
+            source=source,
+            method=method,
+            endpoint=endpoint,
+            user_agent=user_agent,
+            status_code=status.HTTP_403_FORBIDDEN,
+            latency_ms=latency_ms,
+        )
         return FastAPIResponse(
             content=json.dumps({
-                "error": "Access Blocked by Policy Engine",
+                "error": "Access Blocked",
                 "decision": policy_decision.decision.value,
                 "action": policy_decision.action_type,
                 "risk_score": policy_decision.risk_score,
                 "threat_level": policy_decision.threat_level.value,
-                "block_duration_seconds": policy_decision.block_duration_seconds,
                 "reasons": policy_decision.reasons,
                 "explanation": policy_decision.reason,
+                "block_duration_seconds": policy_decision.block_duration_seconds,
                 "request_id": request_id,
             }).encode("utf-8"),
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            status_code=status.HTTP_403_FORBIDDEN,
             media_type="application/json",
             headers={
                 "x-request-id": request_id,
@@ -185,11 +216,22 @@ async def forward_request(
                 "x-risk-score": str(policy_decision.risk_score),
                 "x-threat-level": policy_decision.threat_level.value,
                 "x-policy-version": policy_decision.policy_version,
-                "retry-after": str(policy_decision.block_duration_seconds or 60),
             },
         )
 
+    # 10. Handle CHALLENGE Decision
     if policy_decision.decision == ActionEnum.CHALLENGE:
+        latency_ms = (time.time() - start_time) * 1000.0
+        traffic_logger.log_request(
+            request_id=request_id,
+            timestamp=start_time,
+            source=source,
+            method=method,
+            endpoint=endpoint,
+            user_agent=user_agent,
+            status_code=status.HTTP_403_FORBIDDEN,
+            latency_ms=latency_ms,
+        )
         return FastAPIResponse(
             content=json.dumps({
                 "error": "Security Challenge Required",
@@ -215,8 +257,15 @@ async def forward_request(
             },
         )
 
-    # 8. ALLOW: Forward Request to Target Application
-    target_base = settings.TARGET_SERVICE_URL.rstrip("/")
+    # 11. ALLOW: Select Active Healthy Target Instance from Service Registry (Phase 4 Multi-Instance Routing)
+    target_instance = service_registry.get_active_healthy_instance()
+    if target_instance:
+        target_base = target_instance.url.rstrip("/")
+        target_instance_id = target_instance.instance_id
+    else:
+        target_base = settings.TARGET_SERVICE_URL.rstrip("/")
+        target_instance_id = "default-fallback"
+
     forward_url = f"{target_base}/{path.lstrip('/')}"
     status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
     content_bytes = b""
@@ -247,14 +296,16 @@ async def forward_request(
         status_code = status.HTTP_502_BAD_GATEWAY
         content_bytes = json.dumps({
             "error": "Bad Gateway",
-            "message": f"Could not connect to target service at {target_base}.",
+            "message": f"Could not connect to target service instance '{target_instance_id}' at {target_base}.",
+            "target_instance": target_instance_id,
             "request_id": request_id,
         }).encode("utf-8")
     except httpx.TimeoutException:
         status_code = status.HTTP_504_GATEWAY_TIMEOUT
         content_bytes = json.dumps({
             "error": "Gateway Timeout",
-            "message": f"Target service timed out after {settings.TARGET_SERVICE_TIMEOUT_SECONDS}s.",
+            "message": f"Target service instance '{target_instance_id}' timed out after {settings.TARGET_SERVICE_TIMEOUT_SECONDS}s.",
+            "target_instance": target_instance_id,
             "request_id": request_id,
         }).encode("utf-8")
     except Exception as e:
@@ -262,6 +313,7 @@ async def forward_request(
         content_bytes = json.dumps({
             "error": "Proxy Error",
             "message": str(e),
+            "target_instance": target_instance_id,
             "request_id": request_id,
         }).encode("utf-8")
 
@@ -286,6 +338,7 @@ async def forward_request(
         "x-threat-level": policy_decision.threat_level.value,
         "x-detector-version": risk_assessment.detector_version,
         "x-policy-version": policy_decision.policy_version,
+        "x-target-instance": target_instance_id,
     }
 
     return FastAPIResponse(
@@ -294,6 +347,60 @@ async def forward_request(
         media_type=media_type,
         headers=headers,
     )
+
+
+# ==========================================================
+# Phase 4 Autonomous Self-Healing & Service Recovery Routes
+# ==========================================================
+
+@router.get("/api/recovery/status", tags=["Autonomous Self-Healing"])
+async def get_recovery_status() -> Dict[str, Any]:
+    """Return cluster health snapshot, active instances, and current Recovery Confidence."""
+    verification = recovery_controller.calculate_recovery_confidence()
+    snapshot = service_registry.get_cluster_snapshot(recovery_confidence=verification.recovery_confidence)
+    return {
+        "snapshot": snapshot.model_dump(),
+        "verification_metrics": verification.model_dump(),
+        "active_healthy_pool": [i.instance_id for i in service_registry.get_active_instances()],
+    }
+
+
+@router.get("/api/recovery/events", tags=["Autonomous Self-Healing"])
+async def get_recovery_events(limit: int = Query(default=50, ge=1, le=200)) -> Dict[str, Any]:
+    """Retrieve chronological autonomous recovery and infrastructure events."""
+    events = recovery_controller.get_timeline(limit=limit)
+    return {
+        "returned_count": len(events),
+        "events": [e.model_dump() for e in events],
+    }
+
+
+@router.post("/api/recovery/simulate-failure", tags=["Autonomous Self-Healing"])
+async def simulate_failure_endpoint(body: FailureSimulationRequest) -> Dict[str, Any]:
+    """Deterministic failure simulation hook: Marks instance unhealthy and triggers autonomous recovery."""
+    result = await recovery_controller.simulate_failure(
+        instance_id=body.instance_id,
+        reason=body.reason,
+    )
+    return result
+
+
+@router.post("/api/recovery/reset", tags=["Autonomous Self-Healing"])
+async def reset_recovery_endpoint() -> Dict[str, Any]:
+    """Reset all instance states and recovery timeline for a fresh demonstration."""
+    recovery_controller.reset_recovery_state()
+    return {
+        "status": "success",
+        "message": "Service registry and recovery controller reset to initial HEALTHY state.",
+        "active_instances": [i.instance_id for i in service_registry.get_active_instances()],
+    }
+
+
+@router.get("/api/recovery/verify", tags=["Autonomous Self-Healing"])
+async def verify_recovery_endpoint() -> Dict[str, Any]:
+    """Compute and return the operational Recovery Confidence Score (0–100)."""
+    metrics = recovery_controller.calculate_recovery_confidence()
+    return metrics.model_dump()
 
 
 # ==========================================================
@@ -366,33 +473,14 @@ async def unblock_ip_endpoint(body: UnblockRequest) -> Dict[str, Any]:
 
 @router.get("/api/health", tags=["Health"])
 async def comprehensive_health() -> Dict[str, Any]:
-    """Health information including Phase 3 adaptive defense state."""
-    start_time = time.time()
-    target_base = settings.TARGET_SERVICE_URL.rstrip("/")
-    target_health_url = f"{target_base}/api/health"
-    
-    target_status = "unreachable"
-    target_latency_ms = 0.0
-    target_details: Optional[Dict[str, Any]] = None
-
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            resp = await client.get(target_health_url)
-            target_latency_ms = (time.time() - start_time) * 1000.0
-            if resp.status_code == 200:
-                target_status = "healthy"
-                try:
-                    target_details = resp.json()
-                except Exception:
-                    target_details = {"raw": resp.text}
-            else:
-                target_status = "degraded"
-    except Exception as e:
-        target_status = "unreachable"
-        target_details = {"error": str(e)}
+    """Comprehensive system health including Phase 4 multi-instance cluster status."""
+    verification = recovery_controller.calculate_recovery_confidence()
+    cluster_snapshot = service_registry.get_cluster_snapshot(recovery_confidence=verification.recovery_confidence)
 
     return {
-        "status": "healthy" if target_status == "healthy" else "degraded",
+        "status": cluster_snapshot.cluster_status.lower(),
+        "cluster_status": cluster_snapshot.cluster_status,
+        "recovery_confidence": verification.recovery_confidence,
         "gateway": {
             "status": "online",
             "timestamp": time.time(),
@@ -406,15 +494,11 @@ async def comprehensive_health() -> Dict[str, Any]:
             "active_version": policy_engine.policy_version,
             "mitigation_status": mitigator.get_mitigation_status(),
         },
-        "target_application": {
-            "status": target_status,
-            "url": target_base,
-            "latency_ms": round(target_latency_ms, 2),
-            "details": target_details,
-        },
+        "cluster_health": cluster_snapshot.model_dump(),
         "telemetry": {
             "total_logged_traffic": traffic_logger.get_total_logged_count(),
             "buffered_security_events": len(event_logger.get_recent_events(limit=500)),
+            "buffered_recovery_events": len(recovery_controller.get_timeline(limit=200)),
         },
     }
 
@@ -456,7 +540,7 @@ async def get_detection_status() -> Dict[str, Any]:
     }
 
 
-# Forward explicit API routes to target application
+# Forward explicit API routes to target application pool
 @router.get("/api/products", tags=["Demo App (Proxied)"])
 async def proxy_products(request: Request) -> FastAPIResponse:
     return await forward_request("api/products", request)
@@ -477,6 +561,7 @@ async def proxy_expensive_op(request: Request) -> FastAPIResponse:
     return await forward_request("api/expensive-operation", request)
 
 
+# General proxy route for any `/proxy/{path}` or root `/`
 @router.api_route(
     "/proxy/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
@@ -488,4 +573,5 @@ async def proxy_wildcard(path: str, request: Request) -> FastAPIResponse:
 
 @router.get("/app-root", tags=["Demo App (Proxied)"])
 async def proxy_root_alias(request: Request) -> FastAPIResponse:
+    """Forward to target application root."""
     return await forward_request("", request)

@@ -7,7 +7,7 @@ Enforces real-time access controls:
 """
 
 import time
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 from onechance.config import settings
 from onechance.models.decisions import ActionEnum, PolicyDecision
 

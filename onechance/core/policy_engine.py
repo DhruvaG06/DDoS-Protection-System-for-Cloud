@@ -32,12 +32,20 @@ class PolicyEngine:
         assessment: RiskAssessment,
         endpoint: str = "/",
         request_metadata: Optional[Dict[str, Any]] = None,
+        client_ip: Optional[str] = None,
+        has_valid_challenge: bool = False,
+        **kwargs: Any,
     ) -> PolicyDecision:
         """Map risk assessment and request metadata to ALLOW / CHALLENGE / BLOCK policy decision."""
-        metadata = request_metadata or {}
+        metadata = dict(request_metadata or {})
+        if has_valid_challenge:
+            metadata["challenge_verified"] = True
+        if kwargs.get("challenge_verified"):
+            metadata["challenge_verified"] = True
+
         score = assessment.risk_score
         threat_level = assessment.threat_level
-        client_ip = assessment.client_ip
+        final_client_ip = client_ip or getattr(assessment, "client_ip", None) or "127.0.0.1"
         reasons = list(assessment.contributing_reasons)
 
         # 1. Check if client holds a verified challenge token for this session
@@ -45,12 +53,12 @@ class PolicyEngine:
             return PolicyDecision(
                 decision=ActionEnum.ALLOW,
                 action=ActionEnum.ALLOW,
-                client_ip=client_ip,
+                client_ip=final_client_ip,
                 endpoint=endpoint,
                 risk_score=score,
                 threat_level=threat_level,
                 action_type="challenge_passed",
-                reason=f"Challenge verification successful. Traffic allowed for IP {client_ip}.",
+                reason=f"Challenge verification successful. Traffic allowed for IP {final_client_ip}.",
                 reasons=reasons or ["Security challenge verified successfully"],
                 policy_version=self.policy_version,
             )
@@ -63,7 +71,7 @@ class PolicyEngine:
                 return PolicyDecision(
                     decision=ActionEnum.BLOCK,
                     action=ActionEnum.BLOCK,
-                    client_ip=client_ip,
+                    client_ip=final_client_ip,
                     endpoint=endpoint,
                     risk_score=max(score, 85.0),
                     threat_level=ThreatLevel.HIGH,
@@ -83,7 +91,7 @@ class PolicyEngine:
                 return PolicyDecision(
                     decision=ActionEnum.BLOCK,
                     action=ActionEnum.BLOCK,
-                    client_ip=client_ip,
+                    client_ip=final_client_ip,
                     endpoint=endpoint,
                     risk_score=max(score, 75.0),
                     threat_level=ThreatLevel.HIGH,
@@ -98,7 +106,7 @@ class PolicyEngine:
                 return PolicyDecision(
                     decision=ActionEnum.CHALLENGE,
                     action=ActionEnum.CHALLENGE,
-                    client_ip=client_ip,
+                    client_ip=final_client_ip,
                     endpoint=endpoint,
                     risk_score=max(score, 45.0),
                     threat_level=ThreatLevel.MEDIUM,
@@ -114,7 +122,7 @@ class PolicyEngine:
             return PolicyDecision(
                 decision=ActionEnum.BLOCK,
                 action=ActionEnum.BLOCK,
-                client_ip=client_ip,
+                client_ip=final_client_ip,
                 endpoint=endpoint,
                 risk_score=score,
                 threat_level=threat_level,
@@ -131,7 +139,7 @@ class PolicyEngine:
             return PolicyDecision(
                 decision=ActionEnum.CHALLENGE,
                 action=ActionEnum.CHALLENGE,
-                client_ip=client_ip,
+                client_ip=final_client_ip,
                 endpoint=endpoint,
                 risk_score=score,
                 threat_level=threat_level,
@@ -146,12 +154,12 @@ class PolicyEngine:
         return PolicyDecision(
             decision=ActionEnum.ALLOW,
             action=ActionEnum.ALLOW,
-            client_ip=client_ip,
+            client_ip=final_client_ip,
             endpoint=endpoint,
             risk_score=score,
             threat_level=threat_level,
             action_type="forward",
-            reason=f"Low risk score ({score:.1f}) within safe parameters. Traffic allowed.",
-            reasons=reasons or ["Normal traffic behavior within baseline limits"],
+            reason=f"Low risk score ({score:.1f}). Traffic permitted.",
+            reasons=reasons or ["Normal behavioral metrics observed"],
             policy_version=self.policy_version,
         )

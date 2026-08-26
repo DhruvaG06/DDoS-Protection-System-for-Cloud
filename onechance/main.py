@@ -1,4 +1,4 @@
-"""OneChance Gateway & Autonomous Response Main Application Entrypoint."""
+"""OneChance Gateway & Autonomous Response Main Application Entrypoint (Phase 4)."""
 
 import logging
 from contextlib import asynccontextmanager
@@ -8,6 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from onechance.api.routes import router
 from onechance.config import settings
+from onechance.monitoring.health_monitor import health_monitor
+from onechance.recovery.recovery_controller import recovery_controller
+from onechance.recovery.service_registry import service_registry
 
 # Configure logging
 logging.basicConfig(
@@ -20,18 +23,39 @@ logger = logging.getLogger("onechance.main")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan lifecycle manager."""
-    logger.info("Initializing OneChance Gateway & Reverse Proxy Layer...")
+    logger.info("Initializing OneChance Gateway & Autonomous Self-Healing System (Phase 4)...")
+
+    # 1. Initialize Service Registry with configured instances
+    for instance_id, url in settings.get_target_instance_configs():
+        service_registry.register_instance(
+            instance_id=instance_id,
+            url=url,
+            container_name=f"onechance-{instance_id}",
+        )
+
+    # 2. Wire Health Monitor callback to Recovery Controller
+    health_monitor.on_unhealthy_callback = lambda inst_id, reason: recovery_controller.execute_autonomous_recovery(
+        instance_id=inst_id, trigger_reason=reason
+    )
+
+    # 3. Start Health Monitoring loop
+    if settings.AUTO_RECOVERY_ENABLED:
+        health_monitor.start()
+
     yield
-    logger.info("Shutting down OneChance Gateway...")
+
+    # Shutdown
+    logger.info("Shutting down OneChance Gateway & Background Tasks...")
+    health_monitor.stop()
 
 
 app = FastAPI(
-    title="OneChance DDoS Protection Gateway",
+    title="OneChance DDoS Protection & Autonomous Response Gateway",
     description=(
-        "Smart Cloud DDoS Protection System Gateway & Reverse Proxy. "
-        "Captures structured traffic telemetry for incoming requests before routing to origin services."
+        "Smart Cloud DDoS Protection System with Autonomous Self-Healing and Service Recovery. "
+        "Closed loop workflow: DETECT → ISOLATE → REROUTE → REPLACE → HEALTH CHECK → REINTRODUCE → VERIFY RECOVERY."
     ),
-    version="0.1.0",
+    version="0.4.0",
     lifespan=lifespan,
 )
 
@@ -44,7 +68,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include Gateway and Proxy routes
+# Include Gateway, Telemetry, and Recovery routes
 app.include_router(router)
 
 
@@ -53,11 +77,16 @@ async def gateway_index():
     """OneChance Gateway Index & Endpoint Map."""
     return {
         "gateway": "OneChance Reverse Proxy",
+        "phase": "Phase 4 - Autonomous Self-Healing & Service Recovery",
         "status": "online",
-        "version": "0.1.0",
+        "version": "0.4.0",
         "routes": {
             "health": "/api/health",
+            "recovery_status": "/api/recovery/status",
+            "recovery_events": "/api/recovery/events",
+            "simulate_failure": "/api/recovery/simulate-failure",
             "traffic_logs": "/api/traffic-logs",
+            "security_events": "/api/security-events",
             "proxied_products": "/api/products",
             "proxied_search": "/api/search?q={query}",
             "proxied_login": "/api/login",
