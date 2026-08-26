@@ -32,17 +32,24 @@ class IncomingRequest(BaseModel):
     headers: Dict[str, str] = Field(default_factory=dict)
     user_agent: Optional[str] = None
     timestamp: float
+    status_code: int = 200
+    latency_ms: float = 0.0
     source_type: AttackSourceType = AttackSourceType.EXTERNAL
 
 
 class TrafficFeatures(BaseModel):
-    """Extracted behavioral telemetry features over a sliding window."""
+    """Extracted behavioral telemetry features over a sliding window (Phase 2)."""
     client_ip: str
-    request_rate_per_sec: float = 0.0
-    endpoint_entropy: float = 0.0
-    burstiness_score: float = 0.0
-    error_rate: float = 0.0
-    repeated_pattern_score: float = 0.0
+    requests_per_source: int = Field(default=0, description="1. Total requests from client IP in window")
+    request_rate_per_sec: float = Field(default=0.0, description="2. Average request rate per second")
+    endpoint_concentration: float = Field(default=0.0, description="3. Max ratio of requests to a single endpoint (0.0 - 1.0)")
+    burstiness_score: float = Field(default=0.0, description="4. Peak 1-sec request rate vs window average rate")
+    repeated_pattern_score: float = Field(default=0.0, description="5. Sequential identical endpoint repetition score (0.0 - 1.0)")
+    source_distribution_ratio: float = Field(default=0.0, description="6. Client request volume relative to total window traffic (0.0 - 1.0)")
+    endpoint_distribution_ratio: float = Field(default=0.0, description="7. Ratio of unique endpoints accessed vs total requests (0.0 - 1.0)")
+    endpoint_entropy: float = Field(default=0.0, description="8. Shannon entropy over endpoint access frequency")
+    error_ratio: float = Field(default=0.0, description="9. Ratio of 4xx/5xx HTTP errors in window (0.0 - 1.0)")
+    average_latency_ms: float = Field(default=0.0, description="10. Average request roundtrip latency in milliseconds")
     source_type: AttackSourceType = AttackSourceType.EXTERNAL
     window_duration_seconds: float = 10.0
 

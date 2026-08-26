@@ -25,8 +25,11 @@ class Settings(BaseSettings):
     # Policy & Scoring Thresholds
     RISK_THRESHOLD_CHALLENGE: float = 40.0
     RISK_THRESHOLD_BLOCK: float = 75.0
+    RISK_LOW_MAX: float = 39.0
+    RISK_MEDIUM_MAX: float = 69.0
     RATE_LIMIT_WINDOW_SECONDS: int = 10
     BURST_THRESHOLD: int = 50
+    DETECTOR_MODEL_PATH: str = "onechance/models/artifacts/rf_detector.joblib"
 
     # Health & Recovery Settings
     HEALTH_CHECK_INTERVAL_SECONDS: float = 3.0

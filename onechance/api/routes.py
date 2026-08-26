@@ -9,24 +9,26 @@ from fastapi.responses import Response as FastAPIResponse
 import httpx
 
 from onechance.config import settings
+from onechance.core.detector import ModularDetectorEngine
+from onechance.core.feature_extractor import FeatureExtractor
+from onechance.core.risk_scorer import RiskScorer
 from onechance.logging.traffic_logger import traffic_logger
+from onechance.models.decisions import RiskAssessment, ThreatLevel
+from onechance.models.traffic import AttackSourceType, IncomingRequest
 
 router = APIRouter()
+
+# Singletons for Feature Extractor, Modular Detector Engine, and Risk Scorer
+feature_extractor = FeatureExtractor(window_duration_seconds=float(settings.RATE_LIMIT_WINDOW_SECONDS))
+detector = ModularDetectorEngine(model_path=settings.DETECTOR_MODEL_PATH)
+risk_scorer = RiskScorer()
 
 
 async def forward_request(
     path: str,
     request: Request,
 ) -> FastAPIResponse:
-    """Core reverse-proxy forwarder:
-    
-    1. Capture request metadata (request_id, timestamp, source, method, endpoint, user_agent)
-    2. Forward to target application (origin workload)
-    3. Measure latency / duration
-    4. Capture response status code
-    5. Emit structured traffic log
-    6. Return response to client with tracing headers
-    """
+    """Core reverse-proxy forwarder with integrated Phase 2 Behavioral Anomaly Detection & Risk Scoring."""
     request_id = f"req_{uuid.uuid4().hex[:12]}"
     start_time = time.time()
     source = request.client.host if request.client else "127.0.0.1"
@@ -45,7 +47,6 @@ async def forward_request(
 
     try:
         body = await request.body()
-        # Build headers for forwarding (strip host)
         forward_headers = {
             k: v for k, v in request.headers.items()
             if k.lower() not in ["host", "content-length"]
@@ -92,6 +93,21 @@ async def forward_request(
     # Measure latency
     latency_ms = (time.time() - start_time) * 1000.0
 
+    # Phase 2 Behavioral Feature Extraction & Risk Scoring
+    inc_req = IncomingRequest(
+        client_ip=source,
+        method=method,
+        path=endpoint,
+        user_agent=user_agent,
+        timestamp=start_time,
+        status_code=status_code,
+        latency_ms=latency_ms,
+        source_type=AttackSourceType.EXTERNAL,
+    )
+    features = feature_extractor.extract_features(inc_req)
+    anomaly_prob = detector.predict_anomaly_probability(features)
+    risk_assessment = risk_scorer.calculate_risk(features, anomaly_prob, detector.version)
+
     # Record structured traffic log
     traffic_logger.log_request(
         request_id=request_id,
@@ -104,10 +120,13 @@ async def forward_request(
         latency_ms=latency_ms,
     )
 
-    # Return response with tracing headers
+    # Return response with tracing & risk headers
     headers = {
         "x-request-id": request_id,
         "x-gateway-latency-ms": f"{latency_ms:.2f}",
+        "x-risk-score": str(risk_assessment.risk_score),
+        "x-threat-level": risk_assessment.threat_level.value,
+        "x-detector-version": risk_assessment.detector_version,
     }
 
     return FastAPIResponse(
@@ -120,7 +139,7 @@ async def forward_request(
 
 @router.get("/api/health", tags=["Health"])
 async def comprehensive_health() -> Dict[str, Any]:
-    """Exposes health information for both Gateway and Target Application."""
+    """Exposes health information for Gateway, Target Application, and Detection Engine."""
     start_time = time.time()
     target_base = settings.TARGET_SERVICE_URL.rstrip("/")
     target_health_url = f"{target_base}/api/health"
@@ -152,6 +171,10 @@ async def comprehensive_health() -> Dict[str, Any]:
             "timestamp": time.time(),
             "environment": settings.ENVIRONMENT,
         },
+        "detection_engine": {
+            "active_version": detector.version,
+            "rf_model_loaded": detector.rf_detector.is_loaded,
+        },
         "target_application": {
             "status": target_status,
             "url": target_base,
@@ -173,6 +196,35 @@ async def get_traffic_logs(limit: int = Query(default=50, ge=1, le=500)) -> Dict
         "total_buffered": traffic_logger.get_total_logged_count(),
         "returned_count": len(logs),
         "logs": logs,
+    }
+
+
+# ==========================================================
+# Phase 2 Detection API Routes
+# ==========================================================
+
+@router.post("/api/detection/assess", tags=["Detection API"])
+async def assess_request_risk(request_data: IncomingRequest) -> RiskAssessment:
+    """Internal API service interface evaluating risk score, threat level, features & explainability reasons."""
+    features = feature_extractor.extract_features(request_data)
+    anomaly_prob = detector.predict_anomaly_probability(features)
+    return risk_scorer.calculate_risk(features, anomaly_prob, detector.version)
+
+
+@router.get("/api/detection/status", tags=["Detection API"])
+async def get_detection_status() -> Dict[str, Any]:
+    """Return active detector status, model state, feature importances, and scoring thresholds."""
+    return {
+        "detector_version": detector.version,
+        "rf_model_loaded": detector.rf_detector.is_loaded,
+        "rf_model_path": settings.DETECTOR_MODEL_PATH,
+        "feature_importances": detector.get_feature_importances(),
+        "thresholds": {
+            "low_max": settings.RISK_LOW_MAX,
+            "medium_max": settings.RISK_MEDIUM_MAX,
+            "challenge_threshold": settings.RISK_THRESHOLD_CHALLENGE,
+            "block_threshold": settings.RISK_THRESHOLD_BLOCK,
+        },
     }
 
 
