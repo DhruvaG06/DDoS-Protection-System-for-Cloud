@@ -1,10 +1,10 @@
-"""OneChance API Gateway Reverse-Proxy & Autonomous Response Routes (Phase 4)."""
-
+import asyncio
 import json
+import threading
 import time
 import uuid
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import Response as FastAPIResponse
 import httpx
 from pydantic import BaseModel, Field
@@ -20,7 +20,7 @@ from onechance.logging.event_logger import SecurityEventLogger
 from onechance.logging.traffic_logger import traffic_logger
 from onechance.models.decisions import ActionEnum, PolicyDecision, RiskAssessment, ThreatLevel
 from onechance.models.events import SecurityEvent
-from onechance.models.health import InstanceStatus, RecoveryEventType
+from onechance.models.health import InstanceStatus, RecoveryEvent, RecoveryEventType
 from onechance.models.traffic import AttackSourceType, IncomingRequest
 from onechance.monitoring.health_monitor import health_monitor
 from onechance.recovery.recovery_controller import recovery_controller
@@ -36,6 +36,63 @@ policy_engine = PolicyEngine()
 mitigator = Mitigator()
 rate_limiter = RateLimiter(default_per_ip_limit=settings.RATE_LIMIT_PER_IP_PER_SEC)
 event_logger = SecurityEventLogger()
+
+
+class TelemetryConnectionManager:
+    """Manages active WebSocket connections and broadcasts real-time security telemetry."""
+
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast_json(self, data: dict):
+        disconnected = []
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(data)
+            except Exception:
+                disconnected.append(connection)
+        for conn in disconnected:
+            self.disconnect(conn)
+
+
+ws_manager = TelemetryConnectionManager()
+active_demo_state: Dict[str, bool] = {"running": False}
+
+
+def _on_security_event_broadcast(event: SecurityEvent):
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                ws_manager.broadcast_json({"type": "SECURITY_EVENT", "event": event.model_dump()}),
+                loop,
+            )
+    except Exception:
+        pass
+
+
+def _on_recovery_event_broadcast(event: RecoveryEvent):
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                ws_manager.broadcast_json({"type": "RECOVERY_EVENT", "event": event.model_dump()}),
+                loop,
+            )
+    except Exception:
+        pass
+
+
+event_logger.on_event_callback = _on_security_event_broadcast
+recovery_controller.on_event_callback = _on_recovery_event_broadcast
 
 
 class ChallengeVerifyRequest(BaseModel):
@@ -575,3 +632,123 @@ async def proxy_wildcard(path: str, request: Request) -> FastAPIResponse:
 async def proxy_root_alias(request: Request) -> FastAPIResponse:
     """Forward to target application root."""
     return await forward_request("", request)
+
+
+# ==========================================
+# WebSocket Telemetry & Demo Controls (Phase 5)
+# ==========================================
+
+@router.websocket("/ws/telemetry")
+async def websocket_telemetry_endpoint(websocket: WebSocket):
+    """Real-time WebSocket telemetry stream for Live Security Operations Dashboard."""
+    await ws_manager.connect(websocket)
+    try:
+        sec_events = [e.model_dump() for e in event_logger.get_recent_events(limit=50)]
+        rec_events = [e.model_dump() for e in recovery_controller.get_timeline(limit=50)]
+        all_instances = [inst.model_dump() for inst in service_registry.get_all_instances()]
+        conf = recovery_controller.calculate_recovery_confidence().model_dump()
+
+        await websocket.send_json({
+            "type": "INITIAL_SNAPSHOT",
+            "security_events": sec_events,
+            "recovery_events": rec_events,
+            "instances": all_instances,
+            "recovery_confidence": conf,
+            "timestamp": time.time(),
+        })
+
+        while True:
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_json({"type": "PONG", "timestamp": time.time()})
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception:
+        ws_manager.disconnect(websocket)
+
+
+@router.post("/api/demo/start-normal", tags=["Demo Controls"])
+async def demo_start_normal():
+    """Simulate normal background user traffic."""
+    active_demo_state["running"] = False
+    await asyncio.sleep(0.1)
+    active_demo_state["running"] = True
+
+    def _run_normal():
+        client = httpx.Client(base_url=f"http://127.0.0.1:{settings.GATEWAY_PORT}", timeout=3.0)
+        endpoints = ["/api/products", "/api/search?q=security", "/app-root"]
+        while active_demo_state.get("running", False):
+            for ep in endpoints:
+                if not active_demo_state.get("running", False):
+                    break
+                try:
+                    client.get(ep, headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0)"})
+                except Exception:
+                    pass
+                time.sleep(0.3)
+
+    threading.Thread(target=_run_normal, daemon=True).start()
+    return {"status": "success", "message": "Normal background traffic simulation started"}
+
+
+@router.post("/api/demo/start-attack", tags=["Demo Controls"])
+async def demo_start_attack():
+    """Simulate external DDoS flood attack."""
+    active_demo_state["running"] = False
+    await asyncio.sleep(0.1)
+    active_demo_state["running"] = True
+
+    def _run_attack():
+        client = httpx.Client(base_url=f"http://127.0.0.1:{settings.GATEWAY_PORT}", timeout=3.0)
+        while active_demo_state.get("running", False):
+            try:
+                client.get("/api/expensive-operation?iterations=5000", headers={"user-agent": "External-Botnet/3.0"})
+            except Exception:
+                pass
+            time.sleep(0.04)
+
+    threading.Thread(target=_run_attack, daemon=True).start()
+    return {"status": "success", "message": "External DDoS attack simulation started"}
+
+
+@router.post("/api/demo/start-internal-attack", tags=["Demo Controls"])
+async def demo_start_internal_attack():
+    """Simulate internal cloud workload attack."""
+    active_demo_state["running"] = False
+    await asyncio.sleep(0.1)
+    active_demo_state["running"] = True
+
+    def _run_internal():
+        client = httpx.Client(base_url=f"http://127.0.0.1:{settings.GATEWAY_PORT}", timeout=3.0)
+        headers = {
+            "user-agent": "Internal-Compromised-Microservice/1.0",
+            "x-attack-origin": "internal",
+            "x-forwarded-for": "10.0.9.99",
+        }
+        while active_demo_state.get("running", False):
+            try:
+                client.get("/api/expensive-operation?iterations=2000", headers=headers)
+            except Exception:
+                pass
+            time.sleep(0.04)
+
+    threading.Thread(target=_run_internal, daemon=True).start()
+    return {"status": "success", "message": "Internal cloud workload attack simulation started"}
+
+
+@router.post("/api/demo/stop-attack", tags=["Demo Controls"])
+async def demo_stop_attack():
+    """Stop active simulation traffic threads."""
+    active_demo_state["running"] = False
+    return {"status": "success", "message": "Simulation traffic stopped"}
+
+
+@router.post("/api/demo/reset", tags=["Demo Controls"])
+async def demo_reset():
+    """Reset system state, clear blocklists, and restore service registry."""
+    active_demo_state["running"] = False
+    mitigator.clear()
+    event_logger.clear()
+    traffic_logger.clear()
+    recovery_controller.reset_recovery_state()
+    return {"status": "success", "message": "System state reset successfully"}

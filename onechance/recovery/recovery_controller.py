@@ -12,7 +12,7 @@ from collections import deque
 import logging
 import time
 import uuid
-from typing import Deque, Dict, List, Optional
+from typing import Callable, Deque, Dict, List, Optional
 import httpx
 
 from onechance.models.health import (
@@ -47,6 +47,7 @@ class RecoveryController:
         self._event_timeline: Deque[RecoveryEvent] = deque(maxlen=200)
         self._is_recovering: Dict[str, bool] = {}
         self._last_verification_metrics: Optional[RecoveryVerificationMetrics] = None
+        self.on_event_callback: Optional[Callable[[RecoveryEvent], None]] = None
 
     def record_event(
         self,
@@ -85,6 +86,11 @@ class RecoveryController:
         )
         self._event_timeline.append(event)
         logger.info(f"Recovery Event: [{final_event_type.value}] on {final_instance_id} ({status}) - {trigger_reason}")
+        if self.on_event_callback:
+            try:
+                self.on_event_callback(event)
+            except Exception:
+                pass
         return event
 
     def get_timeline(self, limit: int = 50) -> List[RecoveryEvent]:

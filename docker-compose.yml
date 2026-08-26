@@ -68,6 +68,18 @@ services:
     networks:
       - onechance-net
 
+  # Internal Cloud Workload Attacker Simulator (Phase 5)
+  internal-attacker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: onechance-internal-attacker
+    command: ["python", "scripts/internal_attacker.py", "--url", "http://gateway:8000", "--duration", "30", "--rate", "25"]
+    depends_on:
+      - gateway
+    networks:
+      - onechance-net
+
 networks:
   onechance-net:
     driver: bridge

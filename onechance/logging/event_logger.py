@@ -6,7 +6,7 @@ Stores, buffers, and persists security events for real-time dashboard telemetry.
 import json
 from collections import deque
 from pathlib import Path
-from typing import Deque, List, Optional
+from typing import Callable, Deque, List, Optional
 
 from onechance.config import settings
 from onechance.models.events import SecurityEvent
@@ -20,6 +20,7 @@ class SecurityEventLogger:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self.buffer_size = buffer_size
         self._event_buffer: Deque[SecurityEvent] = deque(maxlen=buffer_size)
+        self.on_event_callback: Optional[Callable[[SecurityEvent], None]] = None
 
     def log_event(self, event: SecurityEvent) -> None:
         """Add event to buffer and append to jsonl log file."""
@@ -29,6 +30,12 @@ class SecurityEventLogger:
                 f.write(event.model_dump_json() + "\n")
         except Exception:
             pass
+
+        if self.on_event_callback:
+            try:
+                self.on_event_callback(event)
+            except Exception:
+                pass
 
     def get_recent_events(
         self,
