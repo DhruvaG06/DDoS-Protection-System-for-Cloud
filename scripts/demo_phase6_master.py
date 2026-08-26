@@ -28,8 +28,8 @@ async def run_master_demo():
     console.print(
         Panel.fit(
             "[bold cyan]ONECHANCE — SMART CLOUD DDOS PROTECTION SYSTEM[/bold cyan]\n"
-            "[bold white]Phase 6: Master Closed-Loop Self-Healing & Defense Demo[/bold white]\n"
-            "[yellow]Smart India Hackathon 2026 • Problem ID: DJS_26_SW_05[/yellow]",
+            "[bold white]Autonomous Closed-Loop Defense & Workload Self-Healing Platform[/bold white]\n"
+            "[yellow]Behavioral Detection • Risk-Adaptive Policy • Autonomous Recovery[/yellow]",
             border_style="cyan",
         )
     )

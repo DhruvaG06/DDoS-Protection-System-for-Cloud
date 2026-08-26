@@ -1,8 +1,6 @@
 # OneChance — Smart Cloud DDoS Protection & Autonomous Response System
 
-> **Smart India Hackathon 2026**  
-> **Problem Statement**: DDoS Protection System for Cloud: Architecture and Tool  
-> **Problem Statement ID**: `DJS_26_SW_05`  
+> **Autonomous Cloud DDoS Protection & Self-Healing Infrastructure**  
 > **Repository**: `DhruvaG06/DDoS-Protection-System-for-Cloud`
 
 ---
@@ -233,6 +231,6 @@ python scripts/evaluate_mvp.py
 
 ## ⚖️ Scope & Honest MVP Boundaries
 
-- **Hackathon MVP Scope**: Built as a clear proof-of-concept for the Smart India Hackathon 2026.
-- **Fail-Safe over Enterprise Overkill**: Uses in-memory state tracking and Docker container controls rather than heavy production Kubernetes or AWS multi-region infrastructure.
-- **Measured Realism**: Performance figures are benchmarked on local test workloads; we do not claim global enterprise scale or edge CDN parity.
+- **MVP Demonstration Scope**: Built as a clear proof-of-concept for Cloud DDoS Protection and Autonomous Response.
+- **Fail-Safe over Enterprise Overkill**: Uses in-memory state tracking and container lifecycle controls rather than heavy production Kubernetes or AWS multi-region infrastructure.
+- **Measured Realism**: Performance figures are benchmarked on live test workloads; we do not claim global enterprise scale or edge CDN parity.

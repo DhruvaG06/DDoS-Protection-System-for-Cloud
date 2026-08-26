@@ -40,7 +40,7 @@ export default function DemoControls() {
   return (
     <div className="cyber-card">
       <div className="card-title">
-        <span>Interactive SIH Demo Control Panel</span>
+        <span>Interactive Scenario Control Deck</span>
         <span style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)' }}>Real-Time Attack & Healing Scenario Generator</span>
       </div>
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, ShieldAlert, RefreshCw, Radio } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, RefreshCw, Radio, Activity, Cpu } from 'lucide-react';
 
 export default function Header({ systemStatus, wsConnected }) {
   const [timeStr, setTimeStr] = useState(new Date().toLocaleTimeString());
@@ -20,7 +20,7 @@ export default function Header({ systemStatus, wsConnected }) {
       case 'RECOVERING':
         return (
           <span className="badge badge-recovering">
-            <RefreshCw size={14} className="spin" /> AUTONOMOUS SELF-HEALING IN PROGRESS
+            <RefreshCw size={14} className="spin" /> AUTONOMOUS HEALING IN PROGRESS
           </span>
         );
       case 'PROTECTED':
@@ -36,25 +36,30 @@ export default function Header({ systemStatus, wsConnected }) {
   return (
     <header className="dashboard-header">
       <div className="brand-title">
-        <ShieldCheck size={28} style={{ color: 'var(--accent-cyan)' }} />
+        <div className="brand-logo-glow">
+          <ShieldCheck size={26} style={{ color: 'var(--accent-cyan)' }} />
+        </div>
         <div>
-          OneChance Security Ops
-          <span style={{ fontSize: '0.75rem', display: 'block', color: 'var(--text-muted)', fontWeight: 500 }}>
-            Smart India Hackathon 2026 • Problem DJS_26_SW_05
+          <div className="brand-name">
+            OneChance <span className="brand-badge">PRO</span>
+          </div>
+          <span className="brand-subtitle">
+            Autonomous Cloud DDoS Protection & Workload Self-Healing
           </span>
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
         {getStatusBadge()}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-          <Radio size={14} style={{ color: wsConnected ? 'var(--accent-green)' : 'var(--accent-red)' }} />
+        <div className="telemetry-pill">
+          <Radio size={13} style={{ color: wsConnected ? 'var(--accent-green)' : 'var(--accent-red)' }} />
           <span>{wsConnected ? 'TELEMETRY LIVE' : 'CONNECTING...'}</span>
         </div>
 
-        <div className="font-mono" style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-          {timeStr}
+        <div className="clock-pill font-mono">
+          <Activity size={13} style={{ color: 'var(--accent-cyan)' }} />
+          <span>{timeStr}</span>
         </div>
       </div>
     </header>
