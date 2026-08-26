@@ -53,6 +53,11 @@ class TrafficFeatures(BaseModel):
     source_type: AttackSourceType = AttackSourceType.EXTERNAL
     window_duration_seconds: float = 10.0
 
+    @property
+    def is_internal_workload(self) -> bool:
+        """Check if source is internal cloud workload or internal compromised service."""
+        return self.source_type == AttackSourceType.INTERNAL_COMPROMISED or self.client_ip.startswith("10.") or self.client_ip.startswith("172.16.")
+
 
 class TrafficLog(BaseModel):
     """Logged event representing an inspected request and the action taken."""

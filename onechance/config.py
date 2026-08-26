@@ -24,12 +24,18 @@ class Settings(BaseSettings):
 
     # Policy & Scoring Thresholds
     RISK_THRESHOLD_CHALLENGE: float = 40.0
-    RISK_THRESHOLD_BLOCK: float = 75.0
+    RISK_THRESHOLD_BLOCK: float = 70.0
     RISK_LOW_MAX: float = 39.0
     RISK_MEDIUM_MAX: float = 69.0
-    RATE_LIMIT_WINDOW_SECONDS: int = 10
+    RATE_LIMIT_WINDOW_SECONDS: float = 1.0
     BURST_THRESHOLD: int = 50
     DETECTOR_MODEL_PATH: str = "onechance/models/artifacts/rf_detector.joblib"
+
+    # Phase 3 Adaptive Defense Settings
+    POLICY_VERSION: str = "v3.0-adaptive-policy"
+    BLOCK_DURATION_SECONDS: int = 60
+    RATE_LIMIT_PER_IP_PER_SEC: int = 20
+    MAX_CHALLENGE_FAILURES_BEFORE_BLOCK: int = 3
 
     # Health & Recovery Settings
     HEALTH_CHECK_INTERVAL_SECONDS: float = 3.0
